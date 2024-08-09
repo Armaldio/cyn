@@ -1,5 +1,7 @@
 <template>
   <div class="editor">
+    <Toast position="bottom-center" />
+
     <!-- <div class="aside">
       <div>
         <div>Editor</div>
@@ -39,7 +41,7 @@
               </div>
             </template>
             <template #content="{ closeCallback }">
-              <InputText type="text" v-model="instance.name" />
+              <InputText v-model="instance.name" type="text" />
               <Button text size="small" @click="closeCallback">
                 <template #icon>
                   <i class="mdi mdi-content-save mr-1"></i>
@@ -54,14 +56,19 @@
           </Inplace>
         </div>
         <div class="right">
-          <Button label="Save" size="small" @click="onSaveRequest">
+          <Button label="Save" :disabled="isRunning" size="small" @click="onSaveRequest">
             <template #icon>
               <i class="mdi mdi-content-save mr-1"></i>
             </template>
           </Button>
-          <Button label="Run" size="small" @click="run">
+          <Button v-if="!isRunning" label="Run" size="small" @click="run">
             <template #icon>
               <i class="mdi mdi-play mr-1"></i>
+            </template>
+          </Button>
+          <Button v-else label="Cancel" size="small" disabled @click="run">
+            <template #icon>
+              <i class="mdi mdi-cancel mr-1"></i>
             </template>
           </Button>
           <!-- <Button label="Save" size="small" icon="pi pi-pencil" rounded @click="save"></Button> -->
@@ -69,9 +76,18 @@
       </div>
       <div class="main">
         <div class="node-editor-wrapper">
+          <EditorNodeEvent
+            v-for="trigger in triggers"
+            v-if="triggers.length > 0"
+            :steps="stepsDisplay"
+            :path="[]"
+            :value="trigger"
+          ></EditorNodeEvent>
+          <EditorNodeEventEmpty v-else :path="[]"></EditorNodeEventEmpty>
+
           <NodesEditor
-            :errors="errors"
             v-if="instance"
+            :errors="errors"
             :nodes="nodes"
             :path="[]"
             :steps="stepsDisplay"
@@ -80,13 +96,13 @@
         </div>
       </div>
 
-      <Dialog
+      <!--<Dialog
         v-model:visible="showSaveDialog"
         modal
         header="Choose location"
         :style="{ width: '50%' }"
       >
-        <!-- @vue-expect-error -->
+        <!~~ @vue-expect-error ~~>
         <Listbox
           v-model="saveOption"
           :options="saveOptions"
@@ -119,7 +135,7 @@
             @click="onSaveCallback"
           ></Button>
         </div>
-      </Dialog>
+      </Dialog>-->
     </div>
   </div>
 </template>
@@ -135,17 +151,32 @@ import { SavedFile } from '@@/model'
 import { useAPI } from '@renderer/composables/api'
 import { useAppStore } from '@renderer/store/app'
 import { MenuItem } from 'primevue/menuitem'
+import { useToast } from 'primevue/usetoast'
 import { tinykeys } from 'tinykeys'
 import { useRouteParams } from '@vueuse/router'
 import { useFiles } from '@renderer/store/files'
 import { klona } from 'klona'
 import { loadExternalFile, loadInternalFile, saveExternalFile } from '@renderer/utils/config'
+import EditorNodeEvent from '@renderer/components/nodes/EditorNodeEvent.vue'
+import EditorNodeEventEmpty from '@renderer/components/nodes/EditorNodeEventEmpty.vue'
+import { RendererChannels, RendererData, RendererEvents, RendererMessage } from '@main/api'
+import { handle } from '@renderer/composables/handlers'
 
 const route = useRoute()
 
 const instance = useEditor()
-const { nodes, variables, name, currentFilePointer, errors, stepsDisplay, id } = storeToRefs(instance)
-const { processGraph, loadPreset, loadSavedFile } = instance
+const {
+  nodes,
+  triggers,
+  variables,
+  name,
+  currentFilePointer,
+  errors,
+  stepsDisplay,
+  id,
+  isRunning
+} = storeToRefs(instance)
+const { processGraph, loadPreset, loadSavedFile, setIsRunning } = instance
 
 const app = useAppStore()
 const { pluginDefinitions } = storeToRefs(app)
@@ -157,17 +188,12 @@ const { update } = filesStore
 watch(
   id,
   async (newId) => {
-    console.log('newId', newId)
-    console.log('files', files)
     const file = files.value.data[newId]
-
-    console.log('file', file)
 
     if (file && file.type === 'external') {
       const { path: filePath } = file
 
       const fileData = await loadExternalFile(filePath)
-      console.log('fileData', fileData)
 
       if ('content' in fileData) {
         const content = JSON.parse(fileData.content) as SavedFile
@@ -182,12 +208,15 @@ watch(
   }
 )
 
+const toast = useToast()
+
 const run = async () => {
   const instance = useEditor()
   const api = useAPI()
 
   const { setActiveNode } = instance
 
+  setIsRunning(true)
   await processGraph({
     graph: klona(nodes.value),
     definitions: pluginDefinitions.value,
@@ -195,35 +224,39 @@ const run = async () => {
     context: {},
     steps: {},
     onNodeEnter: (node) => {
-      console.log('onNodeEnter', node)
       setActiveNode(node)
     },
     onNodeExit: () => {
-      console.log('onNodeExit')
       setActiveNode()
     },
     onExecuteItem: async (node, params, steps) => {
-      console.log('onExecuteItem', node, params, steps)
-      if (node.type === 'condition') {
+      /* if (node.type === 'condition') {
         return api.execute('condition:execute', {
           nodeId: node.origin.nodeId,
           pluginId: node.origin.pluginId,
           params,
           steps
         })
-      } else if (node.type === 'action') {
+      } else  */ if (node.type === 'action') {
         const result = await api.execute('action:execute', {
           nodeId: node.origin.nodeId,
           pluginId: node.origin.pluginId,
           params,
           steps
         })
-        console.log('result', result)
         return result
       } else {
         throw new Error('Unhandled type ' + node.type)
       }
     }
+  })
+  setIsRunning(false)
+
+  toast.add({
+    summary: 'Execution done',
+    life: 10_000,
+    severity: 'success',
+    detail: 'Your project has been executed successfully'
   })
 }
 
@@ -300,11 +333,12 @@ const saveCloud = () => {
 
 const saveLocal = async (path: string) => {
   const result: SavedFile = {
-    version: '1.0.0',
+    version: '2.0.0',
     name: name.value,
     description: '',
     canvas: {
-      blocks: nodes.value
+      blocks: nodes.value,
+      triggers: triggers.value
     },
     variables: variables.value
   }
@@ -384,11 +418,22 @@ const pipelineMenu = computed<MenuItem[]>(() => [
 ])
 
 const menu = ref()
-const toggle = (event) => {
+const toggle = (event: any) => {
   menu.value.toggle(event)
 }
 
 const showSaveDialog = ref(false)
+
+handle('dialog:alert', async (event, { value, send }) => {
+  alert(value.message)
+
+  send({
+    type: 'end',
+    data: {
+      answer: 'ok'
+    }
+  })
+})
 
 tinykeys(window, {
   '$mod+KeyS': (event) => {

@@ -26,9 +26,9 @@
                 :param="value.params[key]"
                 :param-key="key"
                 :param-definition="paramDefinition"
-                @update:model-value="onValueChanged($event, key.toString())"
                 :value="value"
                 :steps="steps"
+                @update:model-value="onValueChanged($event, key.toString())"
               ></ParamEditor>
             </div>
           </div>
@@ -68,8 +68,8 @@ import { createQuickJs } from '@renderer/utils/quickjs'
 import DOMPurify from 'dompurify'
 import { makeResolvedParams } from '@renderer/utils/evaluator'
 import { ValidationError } from '@renderer/models/error'
-import { fmt } from '@renderer/utils/fmt'
 import AddNodeButton from '../AddNodeButton.vue'
+import { useLogger } from '@@/logger'
 
 const props = defineProps({
   value: {
@@ -94,24 +94,22 @@ const props = defineProps({
 
 const { value, steps } = toRefs(props)
 
-const vm = await createQuickJs()
-
 const editor = useEditor()
-const { getNodeDefinition, setNodeValue, addNode, getPluginDefinition, removeNode } = editor
+const { getNodeDefinition, setBlockValue, addNode, getPluginDefinition, removeNode } = editor
 const { activeNode } = storeToRefs(editor)
 
 const nodeDefinition = computed(() => {
-  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId) as Action
+  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId).node as Action
 })
 
 const pluginDefinition = computed(() => {
   return getPluginDefinition(value.value.origin.pluginId)
 })
 
-const onValueChanged = (newValue: unknown, paramKey: string) => {
-  console.log('newValue', newValue)
+const { logger } = useLogger()
 
-  setNodeValue(value.value.uid, {
+const onValueChanged = (newValue: unknown, paramKey: string) => {
+  setBlockValue(value.value.uid, {
     ...value.value,
     params: {
       ...value.value.params,
@@ -142,10 +140,13 @@ const resolvedParams = computedAsync(
   {},
   {
     onError: (error) => {
-      console.error('error', error)
+      logger().error('error', error)
     }
   }
 )
+
+// @ts-expect-error tsconfig
+const vm = await createQuickJs()
 
 const subtitle = computedAsync(
   async () => {
@@ -160,7 +161,7 @@ const subtitle = computedAsync(
   'Loading...',
   {
     onError: (error) => {
-      console.error('error', error)
+      logger().error('error', error)
     }
   }
 )
@@ -186,6 +187,7 @@ const showSidebar = ref(false)
   border-radius: 4px;
   width: fit-content;
   background-color: white;
+
   box-shadow:
     0 0 #0000,
     0 0 #0000,
@@ -197,8 +199,7 @@ const showSidebar = ref(false)
   }
 
   &.error {
-    outline: 1px solid red;
-    outline-offset: 3px;
+    background-color: #ffcccc;
   }
 }
 

@@ -3,8 +3,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 import { version } from '../package.json'
 
 // Custom APIs for renderer
-const api = {
-}
+const api = {}
+
+// TODO: unify window and contextBridge
 
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
@@ -14,20 +15,17 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('version', version)
-    contextBridge.exposeInMainWorld("isPackaged", process.env.NODE_ENV !== "development")
+    contextBridge.exposeInMainWorld('isPackaged', process.env.NODE_ENV !== 'development')
+    contextBridge.exposeInMainWorld('isTest', process.env.TEST === 'true')
+    // eslint-disable-next-line no-console
     console.log('process.env.NODE_ENV', process.env.NODE_ENV)
     // contextBridge.exposeInMainWorld('_dirname', __dirname)
-  } catch (error) {
-    console.error(error)
-  }
+  } catch (error) {}
 } else {
-  // @ts-ignore (define in dts)
   window.electron = electronAPI
-  // @ts-ignore (define in dts)
   window.api = api
-  // @ts-ignore (define in dts)
   window.version = version
-  // @ts-ignore (define in dts)
-  window.isPackaged = app.isPackaged
+  window.isPackaged = process.env.NODE_ENV !== 'development'
+  window.isTest = process.env.TEST === 'true'
   // window.__dirname = __dirname
 }

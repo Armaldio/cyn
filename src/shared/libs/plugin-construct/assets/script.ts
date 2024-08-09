@@ -37,21 +37,31 @@ export const script = async (
   // as soon as it appear, without blocking flow
   // ignore asking for update
   const notNowBtn = page.getByText('Not now')
-  notNowBtn.waitFor().then(async () => {
-    notNowBtn.click()
-  })
+  notNowBtn
+    .waitFor()
+    .then(async () => {
+      notNowBtn.click()
+    })
+    .catch(async () => {
+      log('notNowBtn.click() failed')
+    })
 
   // as soon as it appear, without blocking flow
   // ignore webgl error
   const okDialog = page.locator('#okDialog')
   const webglErrorButton = okDialog.locator('.okButton')
-  webglErrorButton.waitFor().then(async () => {
-    const text = await okDialog.allInnerTexts()
+  webglErrorButton
+    .waitFor()
+    .then(async () => {
+      const text = await okDialog.allInnerTexts()
 
-    if (text.join().toLowerCase().includes('webgl')) {
-      webglErrorButton.click()
-    }
-  })
+      if (text.join().toLowerCase().includes('webgl')) {
+        webglErrorButton.click()
+      }
+    })
+    .catch(async () => {
+      log('webglErrorButton.click() failed')
+    })
 
   if (username && password) {
     log('Authenticating')
@@ -60,14 +70,14 @@ export const script = async (
     await page.frameLocator('#loginDialog iframe').getByLabel('Username').fill(username)
     await page.frameLocator('#loginDialog iframe').getByLabel('Password').fill(password)
 
-    const tokenPromise = page.waitForResponse('https://account.construct.net/login.json')
+    const tokenPromise = page.waitForResponse(/https:\/\/account.*\.construct\.net\/login.json/i)
 
     await page.frameLocator('#loginDialog iframe').getByRole('button', { name: 'Log in' }).click()
 
     const response = await tokenPromise
     const jsonResponse = await response.json()
 
-    console.log('jsonResponse', jsonResponse)
+    log('jsonResponse', jsonResponse)
 
     if (jsonResponse.request.status === 'error') {
       await page.close()

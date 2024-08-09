@@ -13,11 +13,13 @@
         style-src 'self' 'unsafe-inline';
         style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com;
         font-src 'self' https://fonts.gstatic.com;
+        connect-src 'self' https://*.supabase.co;
       "
     />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap" rel="stylesheet">
+    <!-- <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap" rel="stylesheet"> -->
+    <link href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,100..900;1,100..900&family=Montserrat:wght@100&display=swap" rel="stylesheet">
     <style>
       html, body, #app {
         border: none;
@@ -27,7 +29,7 @@
       }
 
       html {
-        font-family: "Bricolage Grotesque", sans-serif !important;
+        font-family: "Jost", sans-serif !important;
         font-optical-sizing: auto;
         font-weight: normal;
         font-style: normal;

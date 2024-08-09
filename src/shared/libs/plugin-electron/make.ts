@@ -77,9 +77,12 @@ export const make = createAction({
     },
     'input-folder': {
       value: '',
-      label: 'Input folder',
+      label: 'Folder to package',
       control: {
-        type: 'path'
+        type: 'path',
+        options: {
+          properties: ['openDirectory']
+        }
       }
     }
   },
@@ -88,7 +91,10 @@ export const make = createAction({
       label: 'Output',
       value: '',
       control: {
-        type: 'path'
+        type: 'path',
+        options: {
+          properties: ['openDirectory']
+        }
       }
     }
   }
@@ -100,29 +106,29 @@ export const makeRunner = createActionRunner<typeof make>(
 
     const { assets, unpack } = paths
 
-    const { join, dirname, basename } = await import('node:path')
+    const { join, dirname, basename, sep, delimiter } = await import('node:path')
     const { cp } = await import('node:fs/promises')
+    const { arch, platform } = await import('process')
     const { fileURLToPath } = await import('url')
-    // @ts-expect-error
+    // @ts-expect-error dfdf
     const __dirname = fileURLToPath(dirname(import.meta.url))
     const { app } = await import('electron')
 
-    console.log('__dirname', __dirname)
-    console.log('process.resourcesPath', process.resourcesPath)
+    log('__dirname', __dirname)
+    log('process.resourcesPath', process.resourcesPath)
 
-    console.log('process.env.NODE_ENV', process.env.NODE_ENV)
+    log('process.env.NODE_ENV', process.env.NODE_ENV)
 
-    console.log('process.cwd()', process.cwd())
-    console.log('app.getAppPath', app.getAppPath())
+    log('process.cwd()', process.cwd())
+    log('app.getAppPath', app.getAppPath())
 
     const modulesPath = join(unpack, 'node_modules')
 
-    console.log('resourcePath', modulesPath)
+    log('resourcePath', modulesPath)
 
-    const { execa } = await import('execa')
     const _pnpm = join(modulesPath, 'pnpm', 'bin', 'pnpm.cjs')
-    console.log('_pnpm', _pnpm)
-    const pnpm = _pnpm.replace('app.asar', 'app.asar.unpacked')
+    log('_pnpm', _pnpm)
+    const pnpm = _pnpm /* .replace('app.asar', 'app.asar.unpacked') */
     // const forge = join(
     //   __dirname,
     //   "node_modules",
@@ -132,23 +138,34 @@ export const makeRunner = createActionRunner<typeof make>(
     //   "electron-forge.js"
     // ).replace('app.asar/out/main', 'app.asar.unpacked');
 
-    const forge = join(modulesPath, '@electron-forge', 'cli', 'dist', 'electron-forge.js').replace(
-      'app.asar',
-      'app.asar.unpacked'
-    )
-
-    console.log('pnpm', pnpm)
-
-    const appFolder = inputs['input-folder']
-    log('appFolder', appFolder)
-
     const destinationFolder = join(cwd, 'build')
 
     log('destinationFolder', destinationFolder)
 
+    const forge = join(
+      destinationFolder,
+      'node_modules',
+      '@electron-forge',
+      'cli',
+      'dist',
+      'electron-forge.js'
+    )
+    // const forge = join(
+    //   modulesPath,
+    //   '@electron-forge',
+    //   'cli',
+    //   'dist',
+    //   'electron-forge.js'
+    // )
+
+    log('pnpm', pnpm)
+
+    const appFolder = inputs['input-folder']
+    log('appFolder', appFolder)
+
     const _templateFolder = join(assets, 'electron', 'template', 'app')
 
-    const templateFolder = _templateFolder.replace('app.asar', 'app.asar.unpacked')
+    const templateFolder = _templateFolder /* .replace('app.asar', 'app.asar.unpacked') */
 
     log('_templateFolder', _templateFolder)
     log('templateFolder', templateFolder)
@@ -156,8 +173,8 @@ export const makeRunner = createActionRunner<typeof make>(
     await cp(templateFolder, destinationFolder, {
       recursive: true,
       filter: (src, dest) => {
-        // console.log('src', src)
-        // console.log('dest', dest)
+        // log('src', src)
+        // log('dest', dest)
         return basename(src) !== 'node_modules'
       }
     })
@@ -166,26 +183,29 @@ export const makeRunner = createActionRunner<typeof make>(
 
     log('placeAppFolder', placeAppFolder)
 
-    const outFolder = join(cwd, 'output')
-
-    log('outFolder', outFolder)
-
     await cp(appFolder, placeAppFolder, {
       recursive: true
     })
 
+    const shimsPaths = join(assets, 'shims')
+
     log('Installing packages')
     await runWithLiveLogs(
-      pnpm,
-      ['install', '--prefer-offline'],
+      process.execPath,
+      [pnpm, 'install'],
       {
-        cwd: destinationFolder
+        cwd: destinationFolder,
+        env: {
+          // DEBUG: '*',
+          ELECTRON_RUN_AS_NODE: '1',
+          PATH: `${shimsPaths}${delimiter}${process.env.PATH}`
+        }
       },
       log
     )
 
     try {
-      // console.log({
+      // log({
       //   arch: inputs.arch,
       //   dir: destinationFolder,
       //   interactive: false,
@@ -202,31 +222,37 @@ export const makeRunner = createActionRunner<typeof make>(
       //   skipPackage: false,
       // });
 
+      const finalPlatform = inputs.platform ?? platform ?? ''
+      const finalArch = inputs.arch ?? arch ?? ''
+
       const logs = await runWithLiveLogs(
-        forge,
-        ['make', '--', '--arch', inputs.arch ?? '', '--platform', inputs.platform ?? ''],
+        process.execPath,
+        [forge, 'make', '--', '--arch', finalArch, '--platform', finalPlatform],
         {
           cwd: destinationFolder,
           env: {
-            DEBUG: 'electron-packager'
+            // DEBUG: '*',
+            ELECTRON_NO_ASAR: '1',
+            ELECTRON_RUN_AS_NODE: '1',
+            PATH: `${shimsPaths}${delimiter}${process.env.PATH}`
           }
         },
         log
       )
 
-      console.log('logs', logs)
+      log('logs', logs)
 
       setOutput('output', join(destinationFolder, 'out', 'make'))
     } catch (e) {
       if (e instanceof Error) {
         if (e.name === 'RequestError') {
-          console.log('Request error')
+          log('Request error')
         }
         if (e.name === 'RequestError') {
-          console.log('Request error')
+          log('Request error')
         }
       }
-      console.error(e)
+      log(e)
     }
   }
 )

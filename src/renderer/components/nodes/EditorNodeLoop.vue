@@ -26,6 +26,7 @@
     <div class="loop-branches">
       <div class="children">
         <div class="vl"></div>
+        <!-- @vue-ignore -->
         <NodesEditor
           :path="[...path, 'children']"
           :extra-add-button="false"
@@ -49,6 +50,7 @@
     <Drawer v-model:visible="showSidebar" class="w-full md:w-10 lg:w-9 xl:w-8" position="right">
       <template v-if="nodeDefinition">
         <div v-for="(param, key) in nodeDefinition.params" :key="key" class="param">
+          <!-- @vue-ignore -->
           <ParamEditor
             :param="value.params[key]"
             :param-key="key"
@@ -77,7 +79,6 @@ import { PropType, computed, ref, toRefs } from 'vue'
 import NodesEditor from '@renderer/pages/nodes-editor.vue'
 import { BlockLoop } from '@@/model'
 import { storeToRefs } from 'pinia'
-import { Liquid } from 'liquidjs'
 import { computedAsync } from '@vueuse/core'
 import AddNodeButton from '@renderer/components/AddNodeButton.vue'
 import { AddNodeEvent } from '../AddNodeButton.model'
@@ -108,16 +109,14 @@ const emit = defineEmits<{
 
 const { value } = toRefs(props)
 
-const engine = new Liquid()
-
 const editor = useEditor()
-const { getNodeDefinition, setNodeValue, getPluginDefinition } = editor
+const { getNodeDefinition, setBlockValue, getPluginDefinition } = editor
 const { activeNode } = storeToRefs(editor)
 
 const showSidebar = ref(false)
 
 const nodeDefinition = computed(() => {
-  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId) as Loop
+  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId).node as Loop
 })
 
 const pluginDefinition = computed(() => {
@@ -126,10 +125,11 @@ const pluginDefinition = computed(() => {
 
 const subtitle = computedAsync(
   async () => {
-    const result = await engine.parseAndRender(nodeDefinition.value?.displayString ?? '', {
-      params: value.value.params
-    })
-    return result
+    // const result = await engine.parseAndRender(nodeDefinition.value?.displayString ?? '', {
+    //   params: value.value.params
+    // })
+    // return result
+    return 'TODO'
   },
   'Loading...',
   {
@@ -142,7 +142,8 @@ const subtitle = computedAsync(
 const onValueChanged = (newValue: unknown, paramKey: string) => {
   console.log('newValue', newValue)
 
-  setNodeValue(value.value.uid, {
+  // @ts-expect-error
+  setBlockValue(value.value.uid, {
     ...value.value,
     params: {
       ...value.value.params,

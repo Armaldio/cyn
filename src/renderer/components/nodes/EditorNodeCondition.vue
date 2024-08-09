@@ -28,6 +28,7 @@
       <div class="branches">
         <div class="branch-true">
           <div class="vl left"></div>
+          <!-- @vue-ignore -->
           <NodesEditor
             :path="[...path, 'branchTrue']"
             :extra-add-button="false"
@@ -38,6 +39,7 @@
         </div>
         <div class="branch-false">
           <div class="vl right"></div>
+          <!-- @vue-ignore -->
           <NodesEditor
             :path="[...path, 'branchFalse']"
             :extra-add-button="false"
@@ -53,6 +55,7 @@
     <Drawer v-model:visible="showSidebar" class="w-full md:w-10 lg:w-9 xl:w-8" position="right">
       <template v-if="nodeDefinition">
         <div v-for="(param, key) in nodeDefinition.params" :key="key" class="param">
+          <!-- @vue-ignore -->
           <ParamEditor
             :param="value.params[key]"
             :param-key="key"
@@ -77,13 +80,11 @@ import { PropType, computed, ref, toRefs } from 'vue'
 import NodesEditor from '@renderer/pages/nodes-editor.vue'
 import { BlockCondition } from '@@/model'
 import { storeToRefs } from 'pinia'
-import { Liquid } from 'liquidjs'
 import { computedAsync } from '@vueuse/core'
 import PluginIcon from './PluginIcon.vue'
 import { Condition } from '@cyn/plugin-core'
 import { ValidationError } from '@renderer/models/error'
-
-const engine = new Liquid()
+import { useLogger } from '@@/logger'
 
 const props = defineProps({
   value: {
@@ -106,29 +107,31 @@ const { value } = toRefs(props)
 
 const $nodeConditionWrapper = ref<HTMLDivElement>()
 
+const { logger } = useLogger()
+
 const subtitle = computedAsync(
   async () => {
-    const result = await engine.parseAndRender(nodeDefinition.value?.displayString ?? '', {
-      params: value.value.params
-    })
-    return result
+    // const result = await engine.parseAndRender(nodeDefinition.value?.displayString ?? '', {
+    //   params: value.value.params
+    // })
+    // return result
+    return 'TODO'
   },
   'Loading...',
   {
     onError: (error) => {
-      console.error('error', error)
+      logger().error('error', error)
     }
   }
 )
 
 const editor = useEditor()
-const { getNodeDefinition, setNodeValue, getPluginDefinition } = editor
+const { getNodeDefinition, setBlockValue, getPluginDefinition } = editor
 const { activeNode } = storeToRefs(editor)
 
 const onValueChanged = (newValue: unknown, paramKey: string) => {
-  console.log('newValue', newValue)
-
-  setNodeValue(value.value.uid, {
+  // @ts-expect-error not yet condition type
+  setBlockValue(value.value.uid, {
     ...value.value,
     params: {
       ...value.value.params,
@@ -138,7 +141,7 @@ const onValueChanged = (newValue: unknown, paramKey: string) => {
 }
 
 const nodeDefinition = computed(() => {
-  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId) as Condition
+  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId).node as Condition
 })
 
 const pluginDefinition = computed(() => {

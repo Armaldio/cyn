@@ -3,22 +3,29 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel'
 import { MakerZIP } from '@electron-forge/maker-zip'
 import { VitePlugin } from '@electron-forge/plugin-vite'
 import { FusesPlugin } from '@electron-forge/plugin-fuses'
+import { MakerDMG } from '@electron-forge/maker-dmg'
 import { FuseV1Options, FuseVersion } from '@electron/fuses'
+import { name } from './src/constants'
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: {
-      unpack: '**/node_modules/{pnpm,@electron-forge}/**/*'
+      // unpack: '**/node_modules/{pnpm,@electron-forge,playwright}/**/*'
     },
+    // asar: false,
     extraResource: ['.vite/build/assets'],
-    name: "Cyn"
+    name
   },
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
-      name: "Cyn"
+      name
     }),
-    new MakerZIP({}, ['darwin', 'linux', 'win32'])
+    new MakerZIP({}, ['darwin', 'linux', 'win32']),
+    new MakerDMG({
+      // background: './assets/dmg-background.png',
+      // format: 'ULFO'
+    })
   ],
   publishers: [
     {

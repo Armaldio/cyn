@@ -20,15 +20,11 @@
 
       <div class="list">
         <div v-for="plugin in searchedElements" :key="plugin.id" class="plugin">
-          <div class="nodes">
+          <div class="triggers">
             <ul class="node list-none p-0 m-0">
               <li class="flex align-items-center mb-3">
                 <span class="mr-3">
-                  <img
-                    v-if="plugin.icon.type === 'image'"
-                    width="32"
-                    :src="plugin.icon.image"
-                  />
+                  <img v-if="plugin.icon.type === 'image'" width="32" :src="plugin.icon.image" />
                   <i
                     v-else-if="plugin.icon.type === 'icon'"
                     style="font-size: 2rem"
@@ -45,21 +41,24 @@
               </li>
               <li
                 v-for="node in plugin.nodes"
-                :key="node.id"
-                class="flex"
-                @click="selected = { nodeId: node.id, pluginId: plugin.id }"
+                :key="node.node.id"
+                class="flex node-item"
+                @click="selected = { nodeId: node.node.id, pluginId: plugin.id }"
+                :disabled="node.disabled"
               >
                 <a
                   class="element flex align-items-center p-3 border-round w-full transition-colors transition-duration-150 cursor-pointer"
                   style="border-radius: '10px'"
-                  :class="{ 'selected': selected?.nodeId === node.id && selected.pluginId === plugin.id }"
+                  :class="{
+                    selected: selected?.nodeId === node.node.id && selected.pluginId === plugin.id
+                  }"
                 >
                   <i class="pi pi-home text-xl mr-3"></i>
                   <span class="flex flex-column">
-                    <span class="font-bold mb-1"> {{ node.name }}</span>
-                    <span class="m-0 text-secondary"> {{ node.description }}</span>
+                    <span class="font-bold mb-1"> {{ node.node.name }}</span>
+                    <span class="m-0 text-secondary"> {{ node.node.description }}</span>
+                    <span class="m-0 text-secondary font-bold" v-if="typeof node.disabled === 'string'">{{ node.disabled }}</span>
                   </span>
-
                 </a>
               </li>
             </ul>
@@ -91,6 +90,8 @@ import { storeToRefs } from 'pinia'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import { useAppStore } from '@renderer/store/app'
+import { CynNode } from '@@/libs/plugin-core'
+import { useLogger } from '@@/logger'
 
 type ButtonProps = InstanceType<typeof Button>['$props']
 
@@ -111,11 +112,7 @@ const { path } = toRefs(props)
 const instance = useEditor()
 const appStore = useAppStore()
 
-const { } = storeToRefs(instance)
-
 const { pluginDefinitions } = storeToRefs(appStore)
-const {  } = appStore
-
 const $searchInput = ref<InstanceType<typeof InputText>>()
 
 const visible = ref(false)
@@ -140,32 +137,34 @@ const addNode = () => {
 const editor = useEditor()
 const { getNodeDefinition, getPluginDefinition } = editor
 
+const { logger } = useLogger()
+
 const onAdd = () => {
   const selection = selected.value
 
   if (!selection) {
-    console.error('cannot find selection')
+    logger().error('cannot find selection')
     return
   }
 
   const def = getPluginDefinition(selection.pluginId)
 
   if (!def) {
-    console.error('cannot find definition')
+    logger().error('cannot find definition')
     return
   }
 
   const node = getNodeDefinition(selection.nodeId, selection.pluginId)
 
   if (!node) {
-    console.error('cannot find node')
+    logger().error('cannot find node')
     return
   }
 
   const insertAt = Number.parseInt(path.value.pop() ?? '0') + 1
 
   instance.addNode({
-    node,
+    node: node.node,
     plugin: def,
     path: path.value,
     insertAt
@@ -174,8 +173,23 @@ const onAdd = () => {
   visible.value = false
 }
 
+const isNodePicked = (node: CynNode, searchedValue: string) => {
+  const description = node.description.toLowerCase()
+  const name = node.name.toLowerCase()
+
+  if (node.type !== 'action') {
+    return false
+  }
+
+  if (description.includes(searchedValue) || name.includes(searchedValue)) {
+    return true
+  }
+  return false
+}
+
 // TODO: refactor
 const searchedElements = computed(() => {
+  logger().info('pluginDefinitions', pluginDefinitions.value)
   const searchedValue = search.value.toLowerCase()
 
   return pluginDefinitions.value
@@ -183,15 +197,7 @@ const searchedElements = computed(() => {
       const description = def.description.toLowerCase()
       const name = def.name.toLowerCase()
 
-      const someNodeMatch = def.nodes.some((node) => {
-        const description = node.description.toLowerCase()
-        const name = node.name.toLowerCase()
-
-        if (description.includes(searchedValue) || name.includes(searchedValue)) {
-          return true
-        }
-        return false
-      })
+      const someNodeMatch = def.nodes.some((node) => isNodePicked(node.node, searchedValue))
 
       if (description.includes(searchedValue) || name.includes(searchedValue) || someNodeMatch) {
         return true
@@ -201,15 +207,7 @@ const searchedElements = computed(() => {
     .map((def) => {
       return {
         ...def,
-        nodes: def.nodes.filter((node) => {
-          const description = node.description.toLowerCase()
-          const name = node.name.toLowerCase()
-
-          if (description.includes(searchedValue) || name.includes(searchedValue)) {
-            return true
-          }
-          return false
-        })
+        nodes: def.nodes.filter((node) => isNodePicked(node.node, searchedValue))
       }
     })
 })
@@ -247,7 +245,7 @@ const searchedElements = computed(() => {
   }
 }
 
-.nodes {
+.triggers {
   margin: 8px;
   display: grid;
   grid-template-columns: 4fr;
@@ -255,6 +253,15 @@ const searchedElements = computed(() => {
 
   .node {
     flex: 1;
+
+    .node-item {
+      cursor: pointer;
+
+      &[disabled] {
+        pointer-events: none;
+        color: grey;
+      }
+    }
   }
 }
 

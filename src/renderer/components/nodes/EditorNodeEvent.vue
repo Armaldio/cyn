@@ -23,6 +23,7 @@
       <Drawer v-model:visible="showSidebar" class="w-full md:w-10 lg:w-9 xl:w-8" position="right">
         <template v-if="nodeDefinition">
           <div v-for="(paramDefinition, key) in nodeDefinition.params" :key="key" class="param">
+            <!-- @vue-ignore -->
             <ParamEditor
               :param="value.params[key]"
               :param-key="key"
@@ -33,8 +34,17 @@
             ></ParamEditor>
           </div>
         </template>
-        <pre>{{ value }}</pre>
-        <pre>{{ getNodeDefinition(value.origin.nodeId, value.origin.pluginId) }}</pre>
+        <template #footer>
+          <div class="flex items-center gap-2">
+            <Button
+              label="Delete"
+              icon="pi pi-trash"
+              class="flex-auto"
+              severity="danger"
+              @click="removeTrigger(value.uid)"
+            ></Button>
+          </div>
+        </template>
       </Drawer>
     </div>
     <AddNodeButton
@@ -48,18 +58,19 @@
 
 <script setup lang="ts">
 import { useEditor } from '@renderer/store/editor'
-import { BlockEvent } from '@@/model'
+import { BlockEvent, Steps } from '@@/model'
 import { storeToRefs } from 'pinia'
 import { PropType, computed, ref, toRefs } from 'vue'
-import { Liquid } from 'liquidjs'
 import { computedAsync } from '@vueuse/core'
+import { makeResolvedParams } from '@renderer/utils/evaluator'
 import ParamEditor from './ParamEditor.vue'
 import { Event } from '@cyn/plugin-core'
+import DOMPurify from 'dompurify'
 import PluginIcon from './PluginIcon.vue'
 import { ValidationError } from '@renderer/models/error'
 import AddNodeButton from '../AddNodeButton.vue'
-
-const engine = new Liquid()
+import { createQuickJs } from '@renderer/utils/quickjs'
+import { useLogger } from '@@/logger'
 
 const props = defineProps({
   value: {
@@ -71,6 +82,10 @@ const props = defineProps({
     required: true
     // default: () => []
   },
+  steps: {
+    type: Object as PropType<Steps>,
+    required: true
+  },
   errors: {
     type: Object as PropType<ValidationError[]>,
     required: false,
@@ -78,14 +93,20 @@ const props = defineProps({
   }
 })
 
-const { value } = toRefs(props)
+const { value, steps } = toRefs(props)
+
+const { logger } = useLogger()
 
 const editor = useEditor()
-const { getNodeDefinition, getPluginDefinition, setNodeValue, addNode } = editor
+const { getNodeDefinition, getPluginDefinition, setTriggerValue, addNode, removeTrigger } = editor
 const { activeNode } = storeToRefs(editor)
 
 const nodeDefinition = computed(() => {
-  return getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId) as Event
+  const el = getNodeDefinition(value.value.origin.nodeId, value.value.origin.pluginId)
+  if (el) {
+    return el.node as Event
+  }
+  return undefined
 })
 
 const pluginDefinition = computed(() => {
@@ -93,9 +114,7 @@ const pluginDefinition = computed(() => {
 })
 
 const onValueChanged = (newValue: unknown, paramKey: string) => {
-  console.log('newValue', newValue)
-
-  setNodeValue(value.value.uid, {
+  setTriggerValue(value.value.uid, {
     ...value.value,
     params: {
       ...value.value.params,
@@ -104,17 +123,48 @@ const onValueChanged = (newValue: unknown, paramKey: string) => {
   })
 }
 
+const resolvedParams = computedAsync(
+  async () => {
+    return makeResolvedParams(
+      {
+        params: value.value.params,
+        steps: steps.value,
+        context: {},
+        variables: []
+      },
+      (item) => {
+        // console.log('item', item)
+        // const cleanOutput = DOMPurify.sanitize(item)
+        // console.log('cleanOutput', cleanOutput)
+
+        // return `<div class=\"param\">${cleanOutput}</div>`
+        return item
+      }
+    )
+  },
+  {},
+  {
+    onError: (error) => {
+      logger().error('error', error)
+    }
+  }
+)
+
 const subtitle = computedAsync(
   async () => {
-    const result = await engine.parseAndRender(nodeDefinition.value?.displayString ?? '', {
-      params: value.value.params
+    const displayString = nodeDefinition.value?.displayString ?? ''
+    const vm = await createQuickJs()
+    const result = await vm.run(displayString, {
+      params: resolvedParams.value,
+      steps: steps.value
     })
-    return result
+    const clean = DOMPurify.sanitize(result)
+    return clean
   },
   'Loading...',
   {
     onError: (error) => {
-      console.error('error', error)
+      logger().error('error', error)
     }
   }
 )

@@ -1,24 +1,26 @@
 <template>
-  <div class="param-editor" @click="onClickInside" v-on-click-outside="onClickOutside">
+  <div v-on-click-outside="onClickOutside" class="param-editor" @click="onClickInside">
     <div class="editor">
       <div class="flex flex-column gap-1 editor-content">
         <div class="label">
+          <!-- Label -->
           <label :for="`data-${paramKey}`"
             >{{ paramDefinition.label }}
             <span
-              class="required"
               v-if="!('required' in paramDefinition) || paramDefinition.required === true"
+              class="required"
             >
               *</span
             >
           </label>
 
           <div class="infos">
+            <!-- Is valid button -->
             <Button
+              v-tooltip.top="expectedTooltip"
               text
               size="small"
               rounded
-              v-tooltip.top="expectedTooltip"
               :severity="isExpectedValid ? 'success' : 'danger'"
             >
               <template #icon>
@@ -27,11 +29,15 @@
             </Button>
           </div>
         </div>
-        <div class="code-editor" ref="$codeEditorText"></div>
 
-        <Skeleton height="20px" v-if="hintText === undefined"></Skeleton>
-        <div v-else class="hint" :class="{ error: isError }" v-dompurify-html="hintText"></div>
+        <!-- Code editor -->
+        <div ref="$codeEditorText" class="code-editor"></div>
 
+        <!-- Hint text -->
+        <Skeleton v-if="hintText === undefined" height="20px"></Skeleton>
+        <div v-else v-dompurify-html="hintText" class="hint" :class="{ error: isError }"></div>
+
+        <!-- Floating indicator -->
         <div
           v-if="isModalDisplayed"
           ref="$floating"
@@ -57,46 +63,56 @@
           </svg>
 
           <div class="helpers">
+            <!-- Value -->
             <Panel header="Value" toggleable>
               <div class="editor">
-                <div class="boolean" v-if="paramDefinition.control.type === 'boolean'">
+                <div v-if="paramDefinition.control.type === 'boolean'" class="boolean">
                   <SelectButton
-                    :model-value="param"
-                    @change="insertEditorEnd($event.value.value)"
+                    :model-value="resultValue"
+                    option-label="text"
+                    option-value="value"
                     :options="[
-                      { text: 'True', value: 'true' },
-                      { text: 'False', value: 'false' }
+                      { text: 'True', value: true },
+                      { text: 'False', value: false }
                     ]"
                     aria-labelledby="basic"
+                    @change="insertEditorReplace($event.value)"
                   >
                     <template #option="slotProps">
                       <span>{{ slotProps.option.text }}</span>
                     </template>
                   </SelectButton>
+                  <p v-if="!isValueSimpleBoolean(param)">Value will be overwitten!</p>
                 </div>
-                <div class="path" v-if="paramDefinition.control.type === 'path'">
-                  <Button class="w-full" @click="onChangePathClick">Browse path</Button>
+                <div v-if="paramDefinition.control.type === 'path'" class="path">
+                  <Button
+                    class="w-full"
+                    @click="onChangePathClick(paramDefinition.control.options)"
+                  >
+                    {{ paramDefinition.control.label ?? 'Browse path' }}
+                  </Button>
                 </div>
-                <div class="select" v-if="paramDefinition.control.type === 'select'">
+                <div v-if="paramDefinition.control.type === 'select'" class="select">
                   <Listbox
-                    @change="onParamSelectChange"
                     :model-value="param"
                     :options="paramDefinition.control.options.options"
                     filter
-                    optionLabel="label"
+                    option-label="label"
                     class="w-full md:w-56"
+                    @change="onParamSelectChange"
                   />
                 </div>
               </div>
             </Panel>
+            <!-- Outputs -->
             <Panel header="Outputs" toggleable>
               <div class="steps-list">
                 <template v-for="(step, stepUid) in steps" :key="stepUid">
-                  <div class="step-item" v-if="Object.keys(step.outputs).length > 0">
+                  <div v-if="Object.keys(step.outputs).length > 0" class="step-item">
                     <div class="step-name">{{ getStepLabel(stepUid) }}</div>
 
                     <div class="step-outputs">
-                      <div class="step-output" v-for="(_output, outputKey) in step.outputs">
+                      <div v-for="(_output, outputKey) in step.outputs" class="step-output">
                         <div
                           class="step"
                           @click="insertEditorEnd(`steps['${stepUid}']['outputs']['${outputKey}']`)"
@@ -155,6 +171,8 @@ import { vOnClickOutside } from '@vueuse/components'
 import { useEditor } from '@renderer/store/editor'
 import { storeToRefs } from 'pinia'
 import { ListboxChangeEvent } from 'primevue/listbox'
+import type { OpenDialogOptions } from 'electron'
+import { useLogger } from '@@/logger'
 
 type Params = (Action | Condition | Event)['params']
 
@@ -185,10 +203,8 @@ const props = defineProps({
 const { param, paramKey, paramDefinition, steps, value } = toRefs(props)
 
 const editor = useEditor()
-const { getNodeDefinition, setNodeValue, addNode, getPluginDefinition } = editor
+const { getNodeDefinition, setBlockValue, addNode, getPluginDefinition } = editor
 const { nodes } = storeToRefs(editor)
-
-const vm = await createQuickJs()
 
 const emit = defineEmits<{
   (event: 'update:modelValue', data: any): void
@@ -202,9 +218,12 @@ const $codeEditorText = ref<HTMLDivElement>()
 const $floating = ref<HTMLDivElement>()
 const $arrow = ref<HTMLElement>()
 
+const isValueSimpleBoolean = (str: string | unknown) => {
+  return str === 'true' || str === 'false'
+}
+
 function myCompletions(context: CompletionContext) {
-  let word = context.matchBefore(/\w*/)
-  console.log('word', word)
+  const word = context.matchBefore(/\w*/)
   if (word) {
     if (word.from == word.to && !context.explicit) return null
     return {
@@ -219,7 +238,7 @@ function myCompletions(context: CompletionContext) {
 }
 
 const regexpLinter = linter((view) => {
-  let diagnostics: Diagnostic[] = []
+  const diagnostics: Diagnostic[] = []
   syntaxTree(view.state)
     .cursor()
     .iterate((node) => {
@@ -252,9 +271,12 @@ const {
   })
 ])
 
-const insertEditorEnd = (str: string) => {
-  console.log('str', str)
-  codeEditorTextUpdate(editorTextValue.value + str)
+const insertEditorEnd = (str: string | number | boolean) => {
+  codeEditorTextUpdate(editorTextValue.value + str.toString())
+}
+
+const insertEditorReplace = (str: string | number | boolean) => {
+  codeEditorTextUpdate(str.toString())
 }
 
 const { floatingStyles, middlewareData } = useFloating($codeEditorText, $floating, {
@@ -283,7 +305,6 @@ const debounce = <T extends (...args: any[]) => void>(
 }
 
 const resolveHintTextResult = (result: unknown) => {
-  console.log('result', result)
   if (paramDefinition.value.control.type === 'select') {
     const label = paramDefinition.value.control.options.options.find(
       (o) => o.value === result
@@ -294,6 +315,9 @@ const resolveHintTextResult = (result: unknown) => {
   }
   return (result as string).toString()
 }
+
+// @ts-expect-error tsconfig
+const vm = await createQuickJs()
 
 watchDebounced(
   editorTextValue,
@@ -314,12 +338,12 @@ watchDebounced(
       hintText.value = resolveHintTextResult(result)
       isError.value = false
     } catch (e) {
-      console.error('e', JSON.stringify(e))
+      logger().error('e', JSON.stringify(e))
       if (e instanceof Error) {
         hintText.value = /* e.name + ' ' +  */ e.message
         isError.value = true
       } else {
-        console.error('e', e)
+        logger().error('e', e)
       }
     }
   },
@@ -349,23 +373,18 @@ const onClickOutside = () => {
   isModalDisplayed.value = false
 }
 
-const onValueChanged = debounce((newValue: string, paramKey: string) => {
-  console.log('param.value', param.value)
-  console.log('newValue', newValue)
-  console.log('paramKey', paramKey)
-
+const onValueChanged = (newValue: string, paramKey: string) => {
   emit('update:modelValue', newValue)
-}, 1000)
+}
 
 onCodeEditorTextUpdate((value) => {
-  onValueChanged(value, paramKey.toString())
+  onValueChanged(value, paramKey.value.toString())
 })
 
 const getOutputLabel = (stepUid: string, key: string) => {
   const nodeOrigin = nodes.value.find((n) => n.uid === stepUid)?.origin
-  console.log('nodeOrigin', nodeOrigin)
   if (nodeOrigin) {
-    const nodeDef = getNodeDefinition(nodeOrigin.nodeId, nodeOrigin.pluginId) as Action
+    const nodeDef = getNodeDefinition(nodeOrigin.nodeId, nodeOrigin.pluginId).node as Action
     if (nodeDef) {
       return nodeDef.outputs[key]?.label ?? key
     }
@@ -376,9 +395,8 @@ const getOutputLabel = (stepUid: string, key: string) => {
 
 const getOutputDescription = (stepUid: string, key: string) => {
   const nodeOrigin = nodes.value.find((n) => n.uid === stepUid)?.origin
-  console.log('nodeOrigin', nodeOrigin)
   if (nodeOrigin) {
-    const nodeDef = getNodeDefinition(nodeOrigin.nodeId, nodeOrigin.pluginId) as Action
+    const nodeDef = getNodeDefinition(nodeOrigin.nodeId, nodeOrigin.pluginId).node as Action
     if (nodeDef) {
       return nodeDef.outputs[key]?.description ?? key
     }
@@ -392,7 +410,7 @@ const getStepLabel = (key: string) => {
   if (nodeOrigin) {
     const nodeDef = getNodeDefinition(nodeOrigin.nodeId, nodeOrigin.pluginId)
     if (nodeDef) {
-      return nodeDef.name
+      return nodeDef.node.name
     }
     return key
   }
@@ -402,19 +420,17 @@ const getStepLabel = (key: string) => {
 /** On path selection */
 const api = useAPI()
 
-const onChangePathClick = async () => {
-  const paths = await api.execute(
-    'dialog:showOpenDialog',
-    { title: 'Choose a new path', properties: ['openDirectory'] },
-    async (_, message) => {
-      const { type, data } = message
-      if (type === 'end') {
-        console.log('end', data)
-      }
-    }
-  )
+const { logger } = useLogger()
 
-  console.log('paths', paths)
+const onChangePathClick = async (options: OpenDialogOptions) => {
+  const paths = await api.execute('dialog:showOpenDialog', options, async (_, message) => {
+    const { type, data } = message
+    if (type === 'end') {
+      logger().info('end', data)
+    }
+  })
+
+  logger().info('paths', paths)
   const p = paths.filePaths[0]
 
   insertEditorEnd(`"${p}"`)

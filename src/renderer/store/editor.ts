@@ -7,16 +7,26 @@ import {
   BlockEvent,
   BlockLoop,
   SavedFile,
+  savedFileMigrator,
   Steps
 } from '@@/model'
 import { useAPI } from '@renderer/composables/api'
-import { Action, Condition, RendererPluginDefinition, Event, Loop, CynNode, InputDefinition } from '@cyn/plugin-core'
+import {
+  Action,
+  Condition,
+  RendererPluginDefinition,
+  Event,
+  Loop,
+  CynNode,
+  InputDefinition,
+  RendererNodeDefinition
+} from '@cyn/plugin-core'
 import { Variable } from '@cyn/core'
 import { defineStore, storeToRefs } from 'pinia'
 import get from 'get-value'
 import set from 'set-value'
 import { nanoid } from 'nanoid'
-import { AddNodeEvent } from '@renderer/components/AddNodeButton.model'
+import { AddNodeEvent, AddTriggerEvent } from '@renderer/components/AddNodeButton.model'
 import { useAppStore } from './app'
 import { SaveLocation } from '@@/save-location'
 import { FileRepo, useFiles } from './files'
@@ -24,6 +34,7 @@ import { useRouteParams } from '@vueuse/router'
 import { ValidationError } from '@renderer/models/error'
 import { isRequired } from '@@/validation'
 import { processGraph } from '@@/graph'
+import { useLogger } from '@@/logger'
 
 export type Context = Record<string, unknown>
 
@@ -48,21 +59,21 @@ export const isActionBlock = (nodeDefinition: Block): nodeDefinition is BlockAct
   return nodeDefinition.type === 'action'
 }
 
-export const isConditionBlock = (nodeDefinition: Block): nodeDefinition is BlockCondition => {
-  return nodeDefinition.type === 'condition'
-}
+// export const isConditionBlock = (nodeDefinition: Block): nodeDefinition is BlockCondition => {
+//   return nodeDefinition.type === 'condition'
+// }
 
-export const isCommentBlock = (nodeDefinition: Block): nodeDefinition is BlockComment => {
-  return nodeDefinition.type === 'comment'
-}
+// export const isCommentBlock = (nodeDefinition: Block): nodeDefinition is BlockComment => {
+//   return nodeDefinition.type === 'comment'
+// }
 
-export const isEventBlock = (nodeDefinition: Block): nodeDefinition is BlockEvent => {
-  return nodeDefinition.type === 'event'
-}
+// export const isEventBlock = (nodeDefinition: Block): nodeDefinition is BlockEvent => {
+//   return nodeDefinition.type === 'event'
+// }
 
-export const isLoopBlock = (nodeDefinition: Block): nodeDefinition is BlockLoop => {
-  return nodeDefinition.type === 'loop'
-}
+// export const isLoopBlock = (nodeDefinition: Block): nodeDefinition is BlockLoop => {
+//   return nodeDefinition.type === 'loop'
+// }
 
 export type BlockToNode<T extends Block> = T['type'] extends 'action'
   ? Action
@@ -79,6 +90,8 @@ export const useEditor = defineStore('editor', () => {
   const { presets, pluginDefinitions } = storeToRefs(appStore)
   const { getNodeDefinition, getPluginDefinition } = appStore
 
+  const { logger } = useLogger()
+
   const filesStore = useFiles()
   const { update } = filesStore
   const { files } = storeToRefs(filesStore)
@@ -88,8 +101,16 @@ export const useEditor = defineStore('editor', () => {
   const name = ref('')
   const description = ref('')
 
+  const isRunning = ref(false)
+  const setIsRunning = (value: boolean) => {
+    isRunning.value = value
+  }
+
   /** All the nodes on the editor */
   const blocks = ref<Array<Block>>([])
+
+  /** All the trigger nodes on the editor */
+  const triggers = ref<Array<BlockEvent>>([])
 
   /** All the variables of the editor */
   const variables = ref<Array<Variable>>([])
@@ -101,19 +122,14 @@ export const useEditor = defineStore('editor', () => {
     return files.value.data[id.value]
   })
 
-  watch(currentFilePointer, () => {
-    console.log('currentFilePointer', currentFilePointer.value)
-  }, {
-    immediate: true
-  })
-
   const savedFile = computed(() => {
     return {
-      version: '1.0.0',
+      version: '2.0.0',
       name: toRaw(name.value),
       description: '',
       canvas: {
-        blocks: toRaw(blocks.value)
+        blocks: toRaw(blocks.value),
+        triggers: toRaw(triggers.value)
       },
       variables: toRaw(variables.value)
     } satisfies SavedFile
@@ -135,7 +151,6 @@ export const useEditor = defineStore('editor', () => {
 
     for (const node of blocks.value) {
       const pluginDef = getNodeDefinition(node.origin.nodeId, node.origin.pluginId)
-      console.log('pluginDef', pluginDef)
 
       if (!result[node.uid]) {
         result[node.uid] = {
@@ -144,12 +159,12 @@ export const useEditor = defineStore('editor', () => {
       }
 
       if (pluginDef) {
-        if (pluginDef.type === 'action') {
-          const outputs = pluginDef.outputs
+        if (pluginDef.node.type === 'action') {
+          const outputs = pluginDef.node.outputs
 
           for (const [key, output] of Object.entries(outputs)) {
-            console.log('output', outputs)
-            result[node.uid]['outputs'][key] = `<div class="step">${pluginDef.name} → ${output.label}</div>`
+            result[node.uid]['outputs'][key] =
+              `<div class="step">${pluginDef.node.name} → ${output.label}</div>`
           }
         }
       }
@@ -172,24 +187,23 @@ export const useEditor = defineStore('editor', () => {
           plugin: x.id
         }))
       )
-      .flat(3) satisfies CynNode[]
+      .flat(3) satisfies RendererNodeDefinition[]
   })
 
   const clear = () => {
     blocks.value = []
     variables.value = []
+    triggers.value = []
     setActiveNode()
-    console.log('clear')
   }
 
   const errors = computed(() => {
     const editorErrors: Record<string, ValidationError[]> = {}
     for (const block of blocks.value) {
       const blockErrors = validate(block)
-      console.log('blockErrors', blockErrors)
 
       for (const err of blockErrors) {
-        if(!editorErrors[block.uid] ) {
+        if (!editorErrors[block.uid]) {
           editorErrors[block.uid] = []
         }
         editorErrors[block.uid].push(err)
@@ -199,56 +213,58 @@ export const useEditor = defineStore('editor', () => {
     return editorErrors
   })
 
-  const validate = (block: Block) => {
+  const validate = (block: Block | BlockEvent) => {
     const errors: ValidationError[] = []
     if (block.type === 'action') {
       const definition = getNodeDefinition(block.origin.nodeId, block.origin.pluginId)
-      const requiredParams = Object.entries(definition?.params ?? {})
+      const requiredParams = Object.entries(definition.node?.params ?? {})
       for (const [key, param] of requiredParams) {
         if (isRequired(param) && !(key in block.params)) {
-          console.warn(`Missing required param "${key}" in node "${block.uid}"`)
+          logger().warn(`Missing required param "${key}" in node "${block.uid}"`)
           errors.push({
             type: 'missing',
             param: key
           })
         }
       }
-    } else if (block.type === 'condition') {
-      const definition = getNodeDefinition(block.origin.nodeId, block.origin.pluginId)
-      const requiredParams = Object.keys(definition?.params ?? {})
-      for (const requiredParam of requiredParams) {
-        if (!(requiredParam in block.params)) {
-          console.warn(`Missing required param "${requiredParam}" in node "${block.uid}"`)
-          errors.push({
-            type: 'missing',
-            param: requiredParam
-          })
-        }
-      }
+      // } else if (block.type === 'condition') {
+      //   const definition = getNodeDefinition(block.origin.nodeId, block.origin.pluginId)
+      //   const requiredParams = Object.keys(definition?.params ?? {})
+      //   for (const requiredParam of requiredParams) {
+      //     if (!(requiredParam in block.params)) {
+      //       console.warn(`Missing required param "${requiredParam}" in node "${block.uid}"`)
+      //       errors.push({
+      //         type: 'missing',
+      //         param: requiredParam
+      //       })
+      //     }
+      //   }
     } else if (block.type === 'event') {
       //
-    } else if (block.type === 'loop') {
-      const definition = getNodeDefinition(block.origin.nodeId, block.origin.pluginId)
-      const requiredParams = Object.keys(definition?.params ?? {})
-      for (const requiredParam of requiredParams) {
-        if (!(requiredParam in block.params)) {
-          console.warn(`Missing required param "${requiredParam}" in node "${block.uid}"`)
-          errors.push({
-            type: 'missing',
-            param: requiredParam
-          })
-        }
-      }
-    } else if (block.type === 'comment') {
-      //
+      // } else if (block.type === 'loop') {
+      //   const definition = getNodeDefinition(block.origin.nodeId, block.origin.pluginId)
+      //   const requiredParams = Object.keys(definition?.params ?? {})
+      //   for (const requiredParam of requiredParams) {
+      //     if (!(requiredParam in block.params)) {
+      //       console.warn(`Missing required param "${requiredParam}" in node "${block.uid}"`)
+      //       errors.push({
+      //         type: 'missing',
+      //         param: requiredParam
+      //       })
+      //     }
+      //   }
+      // } else if (block.type === 'comment') {
+      //   //
     }
     return errors
   }
 
-  const loadSavedFile = async (data: Readonly<SavedFile>) => {
+  const loadSavedFile = async (input: Readonly<SavedFile>) => {
     clear()
 
-    console.log('loadSavedFile data', data)
+    const data = await savedFileMigrator.migrate(input, {
+      debug: true
+    })
 
     name.value = data.name
     description.value = data.description
@@ -260,6 +276,11 @@ export const useEditor = defineStore('editor', () => {
     for (const block of data.canvas.blocks) {
       blocks.value.push(block)
       validate(block)
+    }
+
+    for (const trigger of data.canvas.triggers) {
+      triggers.value.push(trigger)
+      validate(trigger)
     }
 
     // // load connections
@@ -289,11 +310,18 @@ export const useEditor = defineStore('editor', () => {
     }
   }
 
-  const setNodeValue = (nodeId: string, value: Block) => {
+  const removeTrigger = (triggerId: string) => {
+    const triggerIndex = triggers.value.findIndex((b) => b.uid === triggerId)
+    if (triggerIndex > -1) {
+      triggers.value = [
+        ...triggers.value.slice(0, triggerIndex),
+        ...triggers.value.slice(triggerIndex + 1, undefined)
+      ]
+    }
+  }
+
+  const setBlockValue = (nodeId: string, value: Block) => {
     const nodeIndex = blocks.value.findIndex((b) => b.uid === nodeId)
-    console.log('nodeIndex', nodeIndex)
-    console.log('0, nodeIndex', 0, nodeIndex)
-    console.log('nodeIndex + 1, blocks.value.length - 1', nodeIndex + 1, blocks.value.length - 1)
     if (nodeIndex > -1) {
       // replace node
       blocks.value = [
@@ -304,10 +332,19 @@ export const useEditor = defineStore('editor', () => {
     }
   }
 
-  const addNode = (event: AddNodeEvent) => {
-    console.log('event', event)
-    console.log('nodeDefinitions', nodeDefinitions.value)
+  const setTriggerValue = (nodeId: string, value: BlockEvent) => {
+    const nodeIndex = triggers.value.findIndex((b) => b.uid === nodeId)
+    if (nodeIndex > -1) {
+      // replace node
+      triggers.value = [
+        ...triggers.value.slice(0, nodeIndex),
+        value,
+        ...triggers.value.slice(nodeIndex + 1, undefined)
+      ]
+    }
+  }
 
+  const addNode = (event: AddNodeEvent) => {
     const { node: nodeDefinition, path, plugin: pluginDefinition, insertAt } = event
 
     if (nodeDefinition && pluginDefinition) {
@@ -322,7 +359,7 @@ export const useEditor = defineStore('editor', () => {
           params: {}
         }
         addNodeToBlock(node, path, insertAt)
-      } else if (isConditionDefinition(nodeDefinition)) {
+      } /* else if (isConditionDefinition(nodeDefinition)) {
         const node: BlockCondition = {
           uid: nanoid(),
           type: nodeDefinition.type,
@@ -333,17 +370,6 @@ export const useEditor = defineStore('editor', () => {
           params: {},
           branchFalse: [],
           branchTrue: []
-        }
-        addNodeToBlock(node, path, insertAt)
-      } else if (isEventDefinition(nodeDefinition)) {
-        const node: BlockEvent = {
-          uid: nanoid(),
-          type: nodeDefinition.type,
-          origin: {
-            nodeId: nodeDefinition.id,
-            pluginId: pluginDefinition.id
-          },
-          params: {}
         }
         addNodeToBlock(node, path, insertAt)
       } else if (isLoopDefinition(nodeDefinition)) {
@@ -358,23 +384,38 @@ export const useEditor = defineStore('editor', () => {
           children: []
         }
         addNodeToBlock(node, path, insertAt)
-      } else {
-        console.error('Unhandled', nodeDefinition)
+      } */ else {
+        logger().error('Unhandled', nodeDefinition)
       }
     }
   }
 
-  const addNodeToBlock = (node: Block, path: string[], insertAt: number) => {
-    console.log('path', path)
-    console.log('insertAt', insertAt)
-    const value = path.length === 0 ? blocks.value : get(blocks.value, path)
-    console.log('value', value)
+  const addTrigger = (event: AddTriggerEvent) => {
+    const { trigger: triggerDefinition, path, plugin: pluginDefinition, insertAt } = event
+
+    if (triggerDefinition && pluginDefinition) {
+      if (isEventDefinition(triggerDefinition)) {
+        const node: BlockEvent = {
+          uid: nanoid(),
+          type: triggerDefinition.type,
+          origin: {
+            nodeId: triggerDefinition.id,
+            pluginId: pluginDefinition.id
+          },
+          params: {}
+        }
+        addTriggerToBlock(node, path, insertAt)
+      } else {
+        logger().error('Unhandled', triggerDefinition)
+      }
+    }
+  }
+
+  const addTriggerToBlock = (node: BlockEvent, path: string[], insertAt: number) => {
+    const value = path.length === 0 ? triggers.value : get(triggers.value, path)
 
     const firstPart = value.slice(0, insertAt)
     const secondPart = value.slice(insertAt + 1)
-
-    console.log('firstPart', firstPart)
-    console.log('secondPart', secondPart)
 
     const newValue = [
       ...value.slice(0, insertAt),
@@ -383,14 +424,33 @@ export const useEditor = defineStore('editor', () => {
         insertAt // already has +1
       )
     ]
-    console.log('newValue', newValue)
+    if (path.length === 0) {
+      triggers.value = newValue
+    } else {
+      set(triggers.value, path, newValue)
+    }
+
+    return
+  }
+
+  const addNodeToBlock = (node: Block, path: string[], insertAt: number) => {
+    const value = path.length === 0 ? blocks.value : get(blocks.value, path)
+
+    const firstPart = value.slice(0, insertAt)
+    const secondPart = value.slice(insertAt + 1)
+
+    const newValue = [
+      ...value.slice(0, insertAt),
+      node,
+      ...value.slice(
+        insertAt // already has +1
+      )
+    ]
     if (path.length === 0) {
       blocks.value = newValue
     } else {
       set(blocks.value, path, newValue)
     }
-
-    console.log('blocks.value', blocks.value)
 
     return
   }
@@ -414,6 +474,7 @@ export const useEditor = defineStore('editor', () => {
 
   return {
     nodes: blocks,
+    triggers,
     variables,
     nodeDefinitions,
     activeNode,
@@ -427,18 +488,26 @@ export const useEditor = defineStore('editor', () => {
     currentFilePointer,
 
     setActiveNode,
-    setNodeValue,
+    setBlockValue,
+    setTriggerValue,
     removeNode,
+    removeTrigger,
 
     clear,
     loadSavedFile,
     addNode,
     addNodeToBlock,
+
+    addTrigger,
+    addTriggerToBlock,
+
     addVariable,
     getPluginDefinition,
     getNodeDefinition,
     processGraph,
-    loadPreset
+    loadPreset,
+    isRunning,
+    setIsRunning
   }
 })
 

@@ -11,10 +11,13 @@ export const uploadToItch = createAction({
   meta: {},
   params: {
     "input-folder": {
-      label: "Input Folder",
+      label: "Folder to Upload",
       value: '',
       control: {
         type: 'path',
+        options: {
+          properties: ['openDirectory']
+        }
       }
     },
     project: {

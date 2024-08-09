@@ -1,40 +1,26 @@
 import { it, expect, describe, vi } from 'vitest'
 import { execa } from 'execa'
 import { join } from 'path'
-import { tmpdir, platform, arch } from 'os'
+import { tmpdir } from 'os'
 import { nanoid } from 'nanoid'
 import { readFile } from 'fs/promises'
-
-export const getBinFolder = () => {
-  if (platform() === 'win32') {
-    if (arch() === 'x64') {
-      return 'Cyn-win32-x64'
-    }
-    throw new Error('Unsupported platform')
-  } else if (platform() === 'darwin') {
-    if (arch() === 'x64') {
-      return 'Cyn-darwin-x64'
-    }
-    throw new Error('Unsupported platform')
-  } else if (platform() === 'linux') {
-    if (arch() === 'x64') {
-      return 'Cyn-linux-x64'
-    }
-    throw new Error('Unsupported platform')
-  }
-}
+import { name, outFolderName } from '../../../src/constants'
+import { platform, arch } from 'process'
 
 const getBinName = () => {
-  if (platform() === 'win32') {
-    return 'Cyn.exe'
+  if (platform === 'win32') {
+    return `${name}.exe`
   }
-  return 'Cyn'
+  if (platform === 'darwin') {
+    return `${name}.app/Contents/MacOS/${name}`
+  }
+  return name
 }
 
 const tmpLogFile = join(tmpdir(), nanoid() + 'cyn-app-test.log.json')
 const root = process.cwd()
 
-const binFolder = getBinFolder()
+const binFolder = outFolderName('Cyn', platform, arch)
 const binName = getBinName()
 
 const bin = join(root, 'out', binFolder, binName)
@@ -52,7 +38,6 @@ describe('basic', () => {
     async () => {
       const jsonProject = join(fixtures, 'folder-to-electron.json')
       console.log('jsonProject', jsonProject)
-
 
       try {
         const { exitCode, stdout, stderr } = await execa(
@@ -91,7 +76,6 @@ describe('basic', () => {
     async () => {
       const jsonProject = join(fixtures, 'c3-export.json')
       console.log('jsonProject', jsonProject)
-
 
       try {
         const { exitCode, stdout, stderr } = await execa(

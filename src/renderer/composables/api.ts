@@ -1,4 +1,5 @@
 import { Channels, Data, End, Events, Message, RequestId } from '@@/apis'
+import { useLogger } from '@@/logger'
 import { klona } from 'klona'
 import { nanoid } from 'nanoid'
 import { toRaw } from 'vue'
@@ -12,21 +13,24 @@ export type Listener<KEY extends Channels> = (
   data: Events<KEY>
 ) => Promise<void>
 
-export const useAPI = () => {
+export const useAPI = (
+  pipe: {
+    send: (channel: string, ...args: any[]) => void
+    on: any
+  } = window.electron.ipcRenderer
+) => {
+  const { logger } = useLogger()
   /**
    * Send an order
    */
-  const send = <KEY extends Channels>(channel: KEY, args?: Data<KEY>) =>
-    // @ts-expect-error
-    window.electron.ipcRenderer.send(channel, args)
+  const send = <KEY extends Channels>(channel: KEY, args?: Data<KEY>) => pipe.send(channel, args)
 
   const on = <KEY extends Channels>(
     channel: KEY | string,
     listener: (event: Electron.IpcRendererEvent, data: Events<KEY>) => void
   ) => {
     // console.log('listening for', channel)
-    // @ts-expect-error
-    return window.electron.ipcRenderer.on(channel, listener)
+    return pipe.on(channel, listener)
   }
 
   /**
@@ -56,11 +60,10 @@ export const useAPI = () => {
       })
 
       try {
-        // @ts-expect-error
-        window.electron.ipcRenderer.send(channel, message)
+        pipe.send(channel, message)
       } catch (e) {
-        console.error(e)
-        console.error(channel, message)
+        logger().error(e)
+        logger().error(channel, message)
       }
     })
   }
@@ -71,3 +74,5 @@ export const useAPI = () => {
     execute
   }
 }
+
+export type UseAPI = ReturnType<typeof useAPI>
